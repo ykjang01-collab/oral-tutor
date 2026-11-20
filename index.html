@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>5분 AI 구술 학습 튜터</title>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
+    body { margin: 0; background: #f4f6fb; display: flex; justify-content: center; height: 100vh; }
+    .app { width: 100%; max-width: 480px; background: #fff; display: flex; flex-direction: column; height: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+    .header { padding: 16px; background: #4f46e5; color: #fff; display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { font-size: 17px; margin: 0; }
+    .tts-btn { background: rgba(255,255,255,0.2); border: none; color: #fff; padding: 6px 10px; border-radius: 12px; font-size: 12px; cursor: pointer; }
+    .chat-box { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .msg { max-width: 82%; padding: 12px 15px; border-radius: 16px; font-size: 15px; line-height: 1.5; word-break: keep-all; }
+    .ai { background: #eef2ff; color: #1e1b4b; align-self: flex-start; border-bottom-left-radius: 4px; }
+    .user { background: #4f46e5; color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+    .input-area { padding: 12px; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; align-items: center; background: #fff; }
+    input { flex: 1; padding: 12px 14px; border: 1px solid #d1d5db; border-radius: 24px; font-size: 15px; outline: none; }
+    input:focus { border-color: #4f46e5; }
+    .btn { border: none; border-radius: 50%; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; flex-shrink: 0; }
+    .mic-btn { background: #f3f4f6; color: #374151; }
+    .mic-btn.recording { background: #ef4444; color: #fff; animation: pulse 1.2s infinite; }
+    .send-btn { background: #4f46e5; color: #fff; }
+    @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.08); } 100% { transform: scale(1); } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <h1>🎙️ 5분 AI 구술 튜터</h1>
+      <button class="tts-btn" id="ttsToggle">🔊 음성 읽기 ON</button>
+    </div>
+    <div class="chat-box" id="chatBox"></div>
+    <div class="input-area">
+      <button class="btn mic-btn" id="micBtn" title="말하기">🎤</button>
+      <input type="text" id="userInput" placeholder="말하거나 입력해 주세요..." />
+      <button class="btn send-btn" id="sendBtn">➤</button>
+    </div>
+  </div>
+
+  <script>
+    const chatBox = document.getElementById('chatBox');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const micBtn = document.getElementById('micBtn');
+    const ttsToggle = document.getElementById('ttsToggle');
+
+    let ttsEnabled = true;
+    let chatHistory = [];
+
+    ttsToggle.onclick = () => {
+      ttsEnabled = !ttsEnabled;
+      ttsToggle.textContent = ttsEnabled ? '🔊 음성 읽기 ON' : '🔇 음성 읽기 OFF';
+      if (!ttsEnabled) window.speechSynthesis.cancel();
+    };
+
+    function speak(text) {
+      if (!ttsEnabled || !('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'ko-KR';
+      utterance.rate = 1.05;
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function appendMessage(text, sender) {
+      const div = document.createElement('div');
+      div.className = `msg ${sender}`;
+      div.textContent = text;
+      chatBox.appendChild(div);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    async function sendMessage(text) {
+      if (!text.trim()) return;
+      appendMessage(text, 'user');
+      userInput.value = '';
+      chatHistory.push({ role: 'user', parts: [{ text }] });
+
+      const loadingDiv = document.createElement('div');
+      loadingDiv.className = 'msg ai';
+      loadingDiv.textContent = '생각하는 중...';
+      chatBox.appendChild(loadingDiv);
+
+      try {
+        const res = await fetch('/.netlify/functions/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ history: chatHistory })
+        });
+        const data = await res.json();
+        chatBox.removeChild(loadingDiv);
+
+        if (data.reply) {
+          appendMessage(data.reply, 'ai');
+          chatHistory.push({ role: 'model', parts: [{ text: data.reply }] });
+          speak(data.reply);
+        } else {
+          appendMessage('앗, 연결이 잠깐 끊겼어! 다시 한 번 말해 줄래?', 'ai');
+        }
+      } catch (e) {
+        chatBox.removeChild(loadingDiv);
+        appendMessage('서버와 연결할 수 없어. Netlify 환경 변수를 확인해 주세요.', 'ai');
+      }
+    }
+
+    sendBtn.onclick = () => sendMessage(userInput.value);
+    userInput.onkeypress = (e) => { if (e.key === 'Enter') sendMessage(userInput.value); };
+
+    // 음성 인식 (Web Speech API)
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'ko-KR';
+      recognition.interimResults = false;
+
+      micBtn.onclick = () => {
+        window.speechSynthesis.cancel();
+        recognition.start();
+        micBtn.classList.add('recording');
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        micBtn.classList.remove('recording');
+        sendMessage(transcript);
+      };
+
+      recognition.onerror = () => micBtn.classList.remove('recording');
+      recognition.onend = () => micBtn.classList.remove('recording');
+    } else {
+      micBtn.style.display = 'none';
+    }
+
+    // 첫 시작 인사 자동 호출
+    window.onload = () => {
+      const initialGreeting = "안녕, 오늘의 일타 강사님! 최근에 학교나 학원에서 배운 것 중에 제일 기억나는 단어(주제어) 딱 하나만 던져줄래?";
+      appendMessage(initialGreeting, 'ai');
+      chatHistory.push({ role: 'model', parts: [{ text: initialGreeting }] });
+    };
+  </script>
+</body>
+</html>
