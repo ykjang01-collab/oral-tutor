@@ -25,6 +25,38 @@ const SYSTEM_PROMPT = `
 - 학생이 문장을 완성하면 크게 칭찬하고, 오늘 3가지 목표를 모두 달성했음을 알려주며 기분 좋게 종료한다.
 `;
 
+const MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.8-flash-lite',
+  'gemini-2.5-flash-lite'
+];
+
+async function callGemini(modelName, apiKey, validHistory) {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [{ text: SYSTEM_PROMPT }]
+        },
+        contents: validHistory,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 300,
+          thinkingConfig: {
+            thinkingBudget: 0
+          }
+        }
+      })
+    }
+  );
+
+  const data = await response.json();
+  return { ok: response.ok, status: response.status, data };
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
@@ -47,44 +79,40 @@ exports.handler = async function (event) {
       validHistory.shift();
     }
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: {
-            parts: [{ text: SYSTEM_PROMPT }]
-          },
-          contents: validHistory,
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 300,
-            thinkingConfig: {
-              thinkingBudget: 0
-            }
-          }
-        })
+    let lastError = '';
+
+    for (const modelName of MODELS) {
+      const result = await callGemini(modelName, apiKey, validHistory);
+
+      if (result.ok) {
+        const reply =
+          result.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+          '응답을 생성하지 못했어요.';
+
+        return {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reply })
+        };
       }
-    );
 
-    const data = await response.json();
+      lastError = result.data?.error?.message || JSON.stringify(result.data);
 
-    if (!response.ok) {
-      const errMsg = data?.error?.message || JSON.stringify(data);
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reply: `[API 오류] ${errMsg}` })
-      };
+      // 일시적 과부하(high demand / 503 / 429)인 경우 다음 후보 모델로 자동 전환
+      const isOverloaded =
+        result.status === 503 ||
+        result.status === 429 ||
+        /high demand|overloaded|try again later|quota/i.test(lastError);
+
+      if (!isOverloaded) {
+        break;
+      }
     }
-
-    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || '응답을 생성하지 못했어요.';
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reply })
+      body: JSON.stringify({ reply: `[API 오류] ${lastError}` })
     };
   } catch (error) {
     return {
