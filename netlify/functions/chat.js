@@ -33,13 +33,20 @@ exports.handler = async function (event) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'API key not configured' })
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reply: '[오류] Netlify에 GEMINI_API_KEY가 등록되지 않았어요.' })
     };
   }
 
   try {
     const { history } = JSON.parse(event.body);
+
+    // Gemini API 규칙에 맞게 대화 시작이 'user'가 되도록 앞부분의 'model' 인사말 제거
+    const validHistory = [...history];
+    while (validHistory.length > 0 && validHistory[0].role === 'model') {
+      validHistory.shift();
+    }
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
@@ -50,7 +57,7 @@ exports.handler = async function (event) {
           system_instruction: {
             parts: [{ text: SYSTEM_PROMPT }]
           },
-          contents: history,
+          contents: validHistory,
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 300
@@ -60,7 +67,17 @@ exports.handler = async function (event) {
     );
 
     const data = await response.json();
-    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    if (!response.ok) {
+      const errMsg = data?.error?.message || JSON.stringify(data);
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply: `[API 오류] ${errMsg}` })
+      };
+    }
+
+    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || '응답을 생성하지 못했어요.';
 
     return {
       statusCode: 200,
@@ -69,8 +86,9 @@ exports.handler = async function (event) {
     };
   } catch (error) {
     return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message })
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reply: `[서버 오류] ${error.message}` })
     };
   }
 };
