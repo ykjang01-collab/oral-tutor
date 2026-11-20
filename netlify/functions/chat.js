@@ -42,7 +42,6 @@ exports.handler = async function (event) {
   try {
     const { history } = JSON.parse(event.body);
 
-    // Gemini API 규칙에 맞게 대화 시작이 'user'가 되도록 앞부분의 'model' 인사말 제거
     const validHistory = [...history];
     while (validHistory.length > 0 && validHistory[0].role === 'model') {
       validHistory.shift();
@@ -60,7 +59,10 @@ exports.handler = async function (event) {
           contents: validHistory,
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 300
+            maxOutputTokens: 300,
+            thinkingConfig: {
+              thinkingBudget: 0
+            }
           }
         })
       }
